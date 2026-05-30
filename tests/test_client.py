@@ -3,12 +3,14 @@
 import sys
 from unittest.mock import MagicMock, patch
 
+from openai import Omit
 import pytest
 
 from onairos_humanapi.client import (
     DEFAULT_BASE_URL,
     ENV_API_KEY,
     ENV_USER_JWT,
+    HUMAN_API_USER_AGENT,
     JWT_HEADER_NAME,
     HumanApiConfig,
     build_chat_request_kwargs,
@@ -45,6 +47,8 @@ def test_create_human_api_client(mock_openai, sample_config):
     assert call_kwargs["api_key"] == "ona_test_developer_key"
     assert call_kwargs["base_url"] == DEFAULT_BASE_URL
     assert call_kwargs["default_headers"][JWT_HEADER_NAME] == "eyJhbG.test.user.token"
+    assert call_kwargs["default_headers"]["User-Agent"] == HUMAN_API_USER_AGENT
+    assert isinstance(call_kwargs["default_headers"]["X-Stainless-Lang"], Omit)
 
 
 @patch("onairos_humanapi.client.OpenAI")
@@ -73,6 +77,8 @@ def test_build_chat_request_kwargs_includes_onairos_extra_body():
         "currentPage": "home",
         "currentGoal": "cardio",
     }
+    assert isinstance(kwargs["extra_headers"]["x-stainless-retry-count"], Omit)
+    assert isinstance(kwargs["extra_headers"]["x-stainless-read-timeout"], Omit)
 
 
 def test_build_chat_request_kwargs_without_user_context():
