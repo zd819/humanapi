@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Mapping, Sequence
 
@@ -156,55 +157,58 @@ def _trace_output(
     }
 
 
-def chat_completion(
-    client: OpenAI,
+def _tracing_enabled(enable_tracing: bool | None) -> bool:
+    if enable_tracing is not None:
+        return enable_tracing
+    raw = os.environ.get("LANGSMITH_TRACING", "").strip().lower()
+    return raw in ("true", "1", "yes", "on")
+
+
+def _resolve_client(
+    client: OpenAI | None,
     *,
-    messages: Sequence[Mapping[str, Any]],
-    model: str = "openai/gpt-4o-mini",
-    user_context: UserContext | None = None,
-    **kwargs: Any,
-) -> ChatCompletion:
-    """Run a single Human API chat completion."""
-    request_kwargs = build_chat_request_kwargs(
-        messages=messages,
-        model=model,
-        user_context=user_context,
-    )
-    request_kwargs.update(kwargs)
-    return client.chat.completions.create(**request_kwargs)
-
-
-def chat_completion_traced(
-    *,
-    api_key: str | None = None,
-    user_jwt: str | None = None,
-    messages: Sequence[Mapping[str, Any]],
-    model: str = "openai/gpt-4o-mini",
-    user_context: UserContext | None = None,
-    run_name: str = "human_api_chat",
-    trace_metadata: Mapping[str, Any] | None = None,
-    trace_tags: Sequence[str] | None = None,
-    config: HumanApiConfig | None = None,
-    **kwargs: Any,
-) -> ChatCompletion:
-    """
-    Chat completion inside a LangSmith ``@traceable`` span.
-
-    Returns the normal OpenAI ``ChatCompletion`` while logging sanitized Human API
-    metadata and output fields to LangSmith.
-    """
+    config: HumanApiConfig | None,
+    api_key: str | None,
+    user_jwt: str | None,
+) -> OpenAI:
+    if client is not None:
+        return client
     if config is None:
         if api_key is None or user_jwt is None:
-            raise ValueError("Provide HumanApiConfig or both api_key and user_jwt")
+            raise ValueError("Provide client, HumanApiConfig, or both api_key and user_jwt")
         config = HumanApiConfig(api_key=api_key, user_jwt=user_jwt)
+    return create_human_api_client(config)
 
-    client = create_human_api_client(config)
-    request_kwargs = build_chat_request_kwargs(
-        messages=messages,
-        model=model,
-        user_context=user_context,
-    )
-    request_kwargs.update(kwargs)
+
+def _merge_request_kwargs(
+    base_kwargs: dict[str, Any],
+    override_kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    merged = dict(base_kwargs)
+    base_headers = merged.get("extra_headers")
+    override_headers = override_kwargs.get("extra_headers")
+    merged.update(override_kwargs)
+    if isinstance(base_headers, Mapping) or isinstance(override_headers, Mapping):
+        extra_headers: dict[str, Any] = {}
+        if isinstance(base_headers, Mapping):
+            extra_headers.update(base_headers)
+        if isinstance(override_headers, Mapping):
+            extra_headers.update(override_headers)
+        merged["extra_headers"] = extra_headers
+    return merged
+
+
+def _run_traced_completion(
+    *,
+    client: OpenAI,
+    request_kwargs: Mapping[str, Any],
+    messages: Sequence[Mapping[str, Any]],
+    model: str,
+    user_context: UserContext | None,
+    run_name: str,
+    trace_metadata: Mapping[str, Any] | None,
+    trace_tags: Sequence[str] | None,
+) -> ChatCompletion:
     trace_input = _trace_input(
         messages=messages,
         model=model,
@@ -271,3 +275,84 @@ def chat_completion_traced(
         return completion
 
     return _run(trace_input)
+
+
+def chat_completion(
+    client: OpenAI | None = None,
+    *,
+    config: HumanApiConfig | None = None,
+    api_key: str | None = None,
+    user_jwt: str | None = None,
+    messages: Sequence[Mapping[str, Any]],
+    model: str = "openai/gpt-4o-mini",
+    user_context: UserContext | None = None,
+    enable_tracing: bool | None = None,
+    run_name: str = "human_api_chat",
+    trace_metadata: Mapping[str, Any] | None = None,
+    trace_tags: Sequence[str] | None = None,
+    **kwargs: Any,
+) -> ChatCompletion:
+    """
+    Run a Human API chat completion.
+
+    Tracing is enabled when ``enable_tracing`` is True, or when
+    ``LANGSMITH_TRACING`` is ``true``/``1``/``yes``/``on``.
+    """
+    resolved_client = _resolve_client(
+        client,
+        config=config,
+        api_key=api_key,
+        user_jwt=user_jwt,
+    )
+    request_kwargs = build_chat_request_kwargs(
+        messages=messages,
+        model=model,
+        user_context=user_context,
+    )
+    request_kwargs = _merge_request_kwargs(request_kwargs, kwargs)
+    if _tracing_enabled(enable_tracing):
+        return _run_traced_completion(
+            client=resolved_client,
+            request_kwargs=request_kwargs,
+            messages=messages,
+            model=model,
+            user_context=user_context,
+            run_name=run_name,
+            trace_metadata=trace_metadata,
+            trace_tags=trace_tags,
+        )
+    return resolved_client.chat.completions.create(**request_kwargs)
+
+
+def chat_completion_traced(
+    *,
+    api_key: str | None = None,
+    user_jwt: str | None = None,
+    messages: Sequence[Mapping[str, Any]],
+    model: str = "openai/gpt-4o-mini",
+    user_context: UserContext | None = None,
+    run_name: str = "human_api_chat",
+    trace_metadata: Mapping[str, Any] | None = None,
+    trace_tags: Sequence[str] | None = None,
+    config: HumanApiConfig | None = None,
+    **kwargs: Any,
+) -> ChatCompletion:
+    """
+    Chat completion with LangSmith tracing forced on.
+
+    Returns the normal OpenAI ``ChatCompletion`` while logging sanitized Human API
+    metadata and output fields to LangSmith.
+    """
+    return chat_completion(
+        config=config,
+        api_key=api_key,
+        user_jwt=user_jwt,
+        messages=messages,
+        model=model,
+        user_context=user_context,
+        enable_tracing=True,
+        run_name=run_name,
+        trace_metadata=trace_metadata,
+        trace_tags=trace_tags,
+        **kwargs,
+    )

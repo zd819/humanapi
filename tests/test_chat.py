@@ -9,7 +9,8 @@ from onairos_humanapi.chat import chat_completion, chat_completion_traced
 from onairos_humanapi.client import HumanApiConfig
 
 
-def test_chat_completion_calls_create_with_extra_body():
+def test_chat_completion_calls_create_with_extra_body(monkeypatch):
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     client = MagicMock()
     completion = MagicMock()
     client.chat.completions.create.return_value = completion
@@ -28,7 +29,8 @@ def test_chat_completion_calls_create_with_extra_body():
     assert call_kwargs["extra_body"]["onairos"]["userContext"]["currentPage"] == "workout_builder"
 
 
-def test_chat_completion_accepts_string_user_context():
+def test_chat_completion_accepts_string_user_context(monkeypatch):
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     client = MagicMock()
     completion = MagicMock()
     client.chat.completions.create.return_value = completion
@@ -45,7 +47,8 @@ def test_chat_completion_accepts_string_user_context():
 
 
 @patch("onairos_humanapi.chat.create_human_api_client")
-def test_chat_completion_traced_uses_clean_trace_output(mock_create_client):
+def test_chat_completion_auto_tracing_uses_clean_trace_output(mock_create_client, monkeypatch):
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
     mock_client = MagicMock()
     mock_create_client.return_value = mock_client
     mock_completion = MagicMock()
@@ -101,7 +104,7 @@ def test_chat_completion_traced_uses_clean_trace_output(mock_create_client):
     mock_langsmith.traceable.side_effect = traceable_decorator
 
     with patch.dict(sys.modules, {"langsmith": mock_langsmith}):
-        result = chat_completion_traced(
+        result = chat_completion(
             config=HumanApiConfig(api_key="ona_key", user_jwt="user_jwt"),
             messages=[{"role": "user", "content": "Hello"}],
             user_context={"currentGoal": "cardio"},
@@ -140,3 +143,17 @@ def test_chat_completion_traced_uses_clean_trace_output(mock_create_client):
         "completionTokens": 3,
         "totalTokens": 13,
     }
+
+
+@patch("onairos_humanapi.chat.chat_completion")
+def test_chat_completion_traced_forces_tracing(mock_chat_completion):
+    completion = MagicMock()
+    mock_chat_completion.return_value = completion
+
+    result = chat_completion_traced(
+        config=HumanApiConfig(api_key="ona_key", user_jwt="user_jwt"),
+        messages=[{"role": "user", "content": "Hello"}],
+    )
+
+    assert result is completion
+    assert mock_chat_completion.call_args.kwargs["enable_tracing"] is True
