@@ -10,8 +10,10 @@ from onairos_humanapi.client import (
     from_env,
 )
 from onairos_humanapi.chat import chat_completion, chat_completion_traced
+from onairos_humanapi.onairos import Onairos
 
 __all__ = [
+    "Onairos",
     "DEFAULT_BASE_URL",
     "JWT_HEADER_NAME",
     "HumanApiConfig",

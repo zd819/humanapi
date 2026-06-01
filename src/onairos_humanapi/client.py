@@ -6,13 +6,34 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping, MutableMapping, Sequence
 
-from openai import OpenAI
+from openai import OpenAI, Omit
 
 DEFAULT_BASE_URL = "https://human-api.onairos.io/v1"
 JWT_HEADER_NAME = "x-jwt-token"
 ENV_API_KEY = "ONAIROS_API_KEY"
 ENV_USER_JWT = "ONAIROS_USER_JWT"
 ENV_BASE_URL = "ONAIROS_HUMAN_API_BASE_URL"
+HUMAN_API_USER_AGENT = "onairos-humanapi-python/0.1.0"
+UserContext = Mapping[str, Any] | str
+
+
+def _omit_openai_fingerprint_headers() -> dict[str, Any]:
+    return {
+        "X-Stainless-Lang": Omit(),
+        "X-Stainless-Package-Version": Omit(),
+        "X-Stainless-OS": Omit(),
+        "X-Stainless-Arch": Omit(),
+        "X-Stainless-Runtime": Omit(),
+        "X-Stainless-Runtime-Version": Omit(),
+        "X-Stainless-Async": Omit(),
+    }
+
+
+def _omit_openai_request_headers() -> dict[str, Any]:
+    return {
+        "x-stainless-retry-count": Omit(),
+        "x-stainless-read-timeout": Omit(),
+    }
 
 
 @dataclass(frozen=True)
@@ -31,8 +52,12 @@ class HumanApiConfig:
             raise ValueError("user_jwt is required (from SDK consent / handoff token)")
 
 
-def _merge_headers(config: HumanApiConfig) -> dict[str, str]:
-    headers: dict[str, str] = {JWT_HEADER_NAME: config.user_jwt.strip()}
+def _merge_headers(config: HumanApiConfig) -> dict[str, Any]:
+    headers: dict[str, Any] = {
+        "User-Agent": HUMAN_API_USER_AGENT,
+        **_omit_openai_fingerprint_headers(),
+        JWT_HEADER_NAME: config.user_jwt.strip(),
+    }
     headers.update(config.extra_headers)
     return headers
 
@@ -133,10 +158,13 @@ def from_env(
 
 
 def build_user_context_payload(
-    user_context: Mapping[str, Any] | None,
+    user_context: UserContext | None,
 ) -> dict[str, Any] | None:
     if not user_context:
         return None
+    if isinstance(user_context, str):
+        stripped = user_context.strip()
+        return {"userContext": stripped} if stripped else None
     return {"userContext": dict(user_context)}
 
 
@@ -144,7 +172,7 @@ def build_chat_request_kwargs(
     *,
     messages: Sequence[Mapping[str, Any]],
     model: str = "openai/gpt-4o-mini",
-    user_context: Mapping[str, Any] | None = None,
+    user_context: UserContext | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -155,6 +183,7 @@ def build_chat_request_kwargs(
     payload: dict[str, Any] = {
         "model": model,
         "messages": list(messages),
+        "extra_headers": _omit_openai_request_headers(),
     }
     onairos = build_user_context_payload(user_context)
     extra_body: MutableMapping[str, Any] = {}
