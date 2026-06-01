@@ -187,6 +187,8 @@ def _merge_request_kwargs(
     merged = dict(base_kwargs)
     base_headers = merged.get("extra_headers")
     override_headers = override_kwargs.get("extra_headers")
+    base_body = merged.get("extra_body")
+    override_body = override_kwargs.get("extra_body")
     merged.update(override_kwargs)
     if isinstance(base_headers, Mapping) or isinstance(override_headers, Mapping):
         extra_headers: dict[str, Any] = {}
@@ -195,6 +197,13 @@ def _merge_request_kwargs(
         if isinstance(override_headers, Mapping):
             extra_headers.update(override_headers)
         merged["extra_headers"] = extra_headers
+    if isinstance(base_body, Mapping) or isinstance(override_body, Mapping):
+        extra_body: dict[str, Any] = {}
+        if isinstance(base_body, Mapping):
+            extra_body.update(base_body)
+        if isinstance(override_body, Mapping):
+            extra_body.update(override_body)
+        merged["extra_body"] = extra_body
     return merged
 
 
